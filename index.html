@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <!-- See https://drafts.csswg.org/css-viewport/#interactive-widget-section -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=no, interactive-widget=resizes-content" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='12 13 38 38'%3E%3Cg fill='none' fill-rule='evenodd' stroke='%23314e55' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath fill='%2373c9c9' d='M13 35h6v15h-6zm20-7h6v22h-6z'/%3E%3Cpath fill='%23e65f58' d='M23 18h6v32h-6zm20 25h6v7h-6z'/%3E%3C/g%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="main.css" />
+    <link rel="stylesheet" href="lib/o_spreadsheet.css" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC"
+      crossorigin="anonymous" />
+    <link href="https://cdn.jsdelivr.net/npm/katex@0.16.27/dist/katex.min.css" rel="stylesheet" />
+    <title>Tabloid</title>
+  </head>
+
+  <body>
+    <!-- Terminal system integration -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script>
+      window.addEventListener("DOMContentLoaded", function () {
+        // Electron IPC Renderer bypass context isolation if enabled
+        var ipcRenderer;
+        try {
+          ipcRenderer = window.require ? window.require("electron").ipcRenderer : null;
+        } catch (e) {
+          // console.log("Electron IPC not available");
+        }
+
+        var container = document.createElement("div");
+        container.id = "terminal-container";
+        container.style.display = "none";
+        container.style.position = "fixed";
+        container.style.bottom = "0";
+        container.style.left = "0";
+        container.style.width = "100vw";
+        container.style.height = "300px";
+        container.style.boxSizing = "border-box";
+        container.style.background = "#ffffff";
+        container.style.zIndex = "9999";
+        container.style.borderTop = "1px solid var(--os-border-color)";
+        document.body.appendChild(container);
+
+        var mounted = false;
+        var term;
+        var fitAddon;
+
+        window.setTerminalVisible = function (visible) {
+          if (visible) {
+            container.style.display = "flex";
+            container.style.flexDirection = "column";
+            document.body.classList.add("o-terminal-open");
+
+            if (!mounted && (window.Terminal || window.require)) {
+              // Create Toolbar
+              var toolbar = document.createElement("div");
+              toolbar.style.display = "flex";
+              toolbar.style.justifyContent = "space-between";
+              toolbar.style.alignItems = "center";
+              toolbar.style.padding = "4px 12px";
+              toolbar.style.background = "#f8f9fa";
+              toolbar.style.borderBottom = "1px solid #dee2e6";
+              toolbar.style.fontSize = "12px";
+              toolbar.style.fontWeight = "500";
+              toolbar.style.color = "#495057";
+              toolbar.innerHTML = "<span>TERMINAL</span>";
+
+              var syncBtn = document.createElement("button");
+              syncBtn.innerHTML =
+                '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M5 12a7 7 0 0 1 11.89-5H14a1 1 0 0 0 0 2h5.08A1 1 0 0 0 20 8V3a1 1 0 0 0-2 0v2.32A9 9 0 0 0 3 12a1 1 0 0 0 2 0m15-1a1 1 0 0 0-1 1 7 7 0 0 1-11.89 5H10a1 1 0 0 0 0-2H4.92A1 1 0 0 0 4 16v5a1 1 0 0 0 2 0v-2.32A9 9 0 0 0 21 12a1 1 0 0 0-1-1"/></svg>';
+              syncBtn.style.border = "none";
+              syncBtn.style.background = "transparent";
+              syncBtn.style.borderRadius = "4px";
+              syncBtn.style.padding = "2px 8px";
+              syncBtn.style.cursor = "pointer";
+              syncBtn.onclick = function () {
+                if (window.spreadsheetModel) {
+                  window.spreadsheetModel.dispatch("FORCE_VFS_SYNC");
+                }
+              };
+              toolbar.appendChild(syncBtn);
+              container.appendChild(toolbar);
+
+              var termDiv = document.createElement("div");
+              termDiv.style.flex = "1";
+              termDiv.style.minHeight = "0";
+              container.appendChild(termDiv);
+
+              if (window.Terminal) {
+                term = new window.Terminal({
+                  cursorBlink: true,
+                  theme: {
+                    background: "#ffffff",
+                    foreground: "#000000",
+                    cursor: "#000000",
+                    selectionBackground: "rgba(0, 0, 0, 0.3)",
+                  },
+                });
+                fitAddon = new window.FitAddon.FitAddon();
+                term.loadAddon(fitAddon);
+                term.open(termDiv);
+                setTimeout(() => {
+                  fitAddon.fit();
+                  term.focus();
+                }, 100);
+
+                if (ipcRenderer) {
+                  ipcRenderer.send("terminal-create");
+                  ipcRenderer.on("terminal-incData", function (event, data) {
+                    term.write(data);
+                  });
+                  term.onData(function (input) {
+                    ipcRenderer.send("terminal-toShell", input);
+                  });
+                } else {
+                  term.write("\r\n[Erreur : IPC Electron non disponible]\r\n");
+                }
+                mounted = true;
+              }
+            } else if (mounted && fitAddon) {
+              fitAddon.fit();
+            }
+          } else {
+            container.style.display = "none";
+            document.body.classList.remove("o-terminal-open");
+          }
+          // Notify spreadsheet to resize
+          window.dispatchEvent(new Event("resize"));
+        };
+
+        window.addEventListener("resize", function () {
+          if (mounted && fitAddon && container.style.display !== "none") {
+            fitAddon.fit();
+          }
+        });
+      });
+    </script>
+    <!-- End terminal system integration -->
+
+    <script src="https://cdn.jsdelivr.net/npm/@odoo/owl@2.8.1/dist/owl.iife.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-geo@3.9.0/build/index.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.3.0/build/global/luxon.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-treemap@3.1.0/dist/chartjs-chart-treemap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.27/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+
+    <script src="lib/o_spreadsheet.iife.js"></script>
+    <script src="main.js" type="module"></script>
+
+    <style>
+      #import-dialog {
+        border: none;
+        border-radius: 8px;
+        box-shadow: 0 8px 32px rgba(50, 50, 80, 0.18), 0 1.5px 4px rgba(0, 0, 0, 0.08);
+        padding: 0;
+        min-width: 340px;
+        font-family: inherit;
+      }
+
+      #import-dialog form {
+        padding: 24px 24px 16px 24px;
+        background: var(--os-white-bg, #fff);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      #import-dialog h3 {
+        margin: 0 0 8px 0;
+        font-size: 1.2rem;
+        color: var(--os-text-body, #374151);
+        font-weight: 600;
+      }
+
+      #import-dialog p {
+        margin: 0 0 8px 0;
+        color: var(--os-text-body-muted, #374151c2);
+        font-size: 1rem;
+      }
+
+      #import-dialog div {
+        display: flex;
+        gap: 24px;
+        margin-bottom: 8px;
+      }
+
+      #import-dialog label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 1rem;
+        color: var(--os-text-body, #374151);
+        cursor: pointer;
+      }
+
+      #import-dialog menu {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 8px;
+        padding: 0;
+        background: none;
+        border: none;
+      }
+
+      #import-dialog button {
+        border: none;
+        border-radius: 4px;
+        padding: 6px 18px;
+        font-size: 1rem;
+        font-family: inherit;
+        cursor: pointer;
+        background: var(--os-button-bg, #e7e9ed);
+        color: var(--os-text-body, #374151);
+        transition: background 0.15s;
+      }
+
+      #import-dialog button#import-confirm-btn {
+        background: var(--os-primary-button-bg, #714b67);
+        color: #fff;
+        font-weight: 500;
+      }
+
+      #import-dialog button#import-confirm-btn:hover {
+        background: var(--os-primary-button-hover-bg, #624159);
+      }
+
+      #import-dialog button[value="cancel"]:hover {
+        background: var(--os-button-hover-bg, #d8dadd);
+      }
+
+      #import-dialog::backdrop {
+        background: rgba(60, 60, 80, 0.18);
+        backdrop-filter: blur(2px);
+      }
+
+      /* Terminal layout adjustment */
+      body.o-terminal-open .o-spreadsheet {
+        height: calc(100% - 300px) !important;
+      }
+    </style>
+
+    <!-- Import dialog for file import mode selection -->
+    <dialog id="import-dialog">
+      <form method="dialog">
+        <h3>Importer le fichier</h3>
+        <p>Où voulez-vous importer ce fichier ?</p>
+        <div>
+          <label>
+            <input type="radio" name="importMode" value="new" checked />
+            Nouveau projet
+          </label>
+          <label>
+            <input type="radio" name="importMode" value="current" />
+            Projet existant
+          </label>
+        </div>
+        <menu>
+          <button value="cancel">Annuler</button>
+          <button id="import-confirm-btn" value="ok">Importer</button>
+        </menu>
+      </form>
+    </dialog>
+  </body>
+</html>
